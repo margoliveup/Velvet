@@ -9,51 +9,6 @@ local RenderStepped = RunService.RenderStepped;
 local LocalPlayer = Players.LocalPlayer;
 local Mouse = LocalPlayer:GetMouse();
 
--- ========================================
--- ПОСТОЯННЫЙ КАСТОМНЫЙ КУРСОР (НЕЖНО-РОЗОВЫЙ)
--- ========================================
-local PermanentCursor = Drawing.new('Triangle');
-PermanentCursor.Thickness = 1;
-PermanentCursor.Filled = true;
-PermanentCursor.Visible = true;
-PermanentCursor.Color = Color3.fromRGB(255, 182, 193); -- Нежно-розовый цвет (Light Pink)
-PermanentCursor.ZIndex = 9999;
-
-local PermanentCursorOutline = Drawing.new('Triangle');
-PermanentCursorOutline.Thickness = 1;
-PermanentCursorOutline.Filled = false;
-PermanentCursorOutline.Color = Color3.new(0, 0, 0);
-PermanentCursorOutline.Visible = true;
-PermanentCursorOutline.ZIndex = 9998;
-
--- Функция для обновления позиции курсора
-local function UpdatePermanentCursor()
-    if not PermanentCursor or not PermanentCursorOutline then return end
-    
-    local mPos = InputService:GetMouseLocation();
-    
-    PermanentCursor.PointA = Vector2.new(mPos.X, mPos.Y);
-    PermanentCursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
-    PermanentCursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
-    
-    PermanentCursorOutline.PointA = PermanentCursor.PointA;
-    PermanentCursorOutline.PointB = PermanentCursor.PointB;
-    PermanentCursorOutline.PointC = PermanentCursor.PointC;
-end
-
--- Запускаем постоянное обновление курсора
-task.spawn(function()
-    -- Отключаем стандартный курсор навсегда
-    InputService.MouseIconEnabled = false;
-    
-    while true do
-        UpdatePermanentCursor();
-        RenderStepped:Wait();
-    end
-end);
--- ========================================
-
-
 local ProtectGui = protectgui or (syn and syn.protect_gui) or (function() end);
 
 local ScreenGui = Instance.new('ScreenGui');
@@ -3566,7 +3521,73 @@ function Library:CreateWindow(...)
             -- A bit scuffed, but if we're going from not toggled -> toggled we want to show the frame immediately so that the fade is visible.
             Outer.Visible = true;
 
-            -- Курсор теперь управляется глобально (см. PermanentCursor выше)
+            task.spawn(function()
+                -- FIXED: Стабильный курсор с нежно-розовым цветом
+                local State = InputService.MouseIconEnabled;
+
+                local Cursor = Drawing.new('Triangle');
+                Cursor.Thickness = 1;
+                Cursor.Filled = true;
+                Cursor.Visible = true;
+                Cursor.Color = Color3.fromRGB(255, 182, 193); -- Нежно-розовый цвет
+                Cursor.ZIndex = 9999; -- Курсор всегда поверх
+
+                local CursorOutline = Drawing.new('Triangle');
+                CursorOutline.Thickness = 2;
+                CursorOutline.Filled = false;
+                CursorOutline.Color = Color3.fromRGB(139, 69, 88); -- Темно-розовый контур
+                CursorOutline.Visible = true;
+                CursorOutline.ZIndex = 9998;
+
+                -- Сохраняем ссылки для доступа
+                Library.CustomCursor = Cursor;
+                Library.CustomCursorOutline = CursorOutline;
+
+                local running = true;
+
+                while running and Toggled and ScreenGui.Parent do
+                    local success = pcall(function()
+                        -- Принудительно отключаем системный курсор каждый кадр
+                        InputService.MouseIconEnabled = false;
+
+                        local mPos = InputService:GetMouseLocation();
+
+                        -- Обновляем позицию курсора
+                        Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
+                        Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
+                        Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
+
+                        CursorOutline.PointA = Cursor.PointA;
+                        CursorOutline.PointB = Cursor.PointB;
+                        CursorOutline.PointC = Cursor.PointC;
+                        
+                        -- Проверяем видимость
+                        if Cursor.Visible ~= true then
+                            Cursor.Visible = true;
+                        end
+                        if CursorOutline.Visible ~= true then
+                            CursorOutline.Visible = true;
+                        end
+                    end);
+                    
+                    if not success then
+                        running = false;
+                    end
+
+                    task.wait();
+                end;
+
+                -- Восстанавливаем системный курсор
+                task.wait(0.05);
+                InputService.MouseIconEnabled = State;
+
+                -- Безопасно удаляем
+                pcall(function() Cursor:Remove(); end);
+                pcall(function() CursorOutline:Remove(); end);
+                
+                Library.CustomCursor = nil;
+                Library.CustomCursorOutline = nil;
+            end);
         end;
 
         for _, Desc in next, Outer:GetDescendants() do
@@ -3641,4 +3662,32 @@ Players.PlayerAdded:Connect(OnPlayerChange);
 Players.PlayerRemoving:Connect(OnPlayerChange);
 
 getgenv().Library = Library
+
+-- ============================================================
+-- CURSOR RESTORE FUNCTION (FIX)
+-- ============================================================
+function Library:RestoreCursor()
+    -- Принудительно восстанавливаем системный курсор
+    pcall(function()
+        InputService.MouseIconEnabled = true;
+    end);
+    
+    -- Удаляем кастомный курсор если он существует
+    if Library.CustomCursor then
+        pcall(function()
+            Library.CustomCursor.Visible = false;
+            Library.CustomCursor:Remove();
+            Library.CustomCursor = nil;
+        end);
+    end
+    
+    if Library.CustomCursorOutline then
+        pcall(function()
+            Library.CustomCursorOutline.Visible = false;
+            Library.CustomCursorOutline:Remove();
+            Library.CustomCursorOutline = nil;
+        end);
+    end
+end;
+
 return Library
