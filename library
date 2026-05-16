@@ -380,23 +380,13 @@ function Library:GiveSignal(Signal)
 end
 
 function Library:Unload()
-    -- Чистим курсор если он есть
-    if Library._CursorObjects then
-        pcall(function() Library._CursorObjects.Cursor:Remove() end)
-        pcall(function() Library._CursorObjects.Outline:Remove() end)
-        Library._CursorObjects = nil
-    end
-    
-    -- Восстанавливаем курсор системы
-    pcall(function()
-        InputService.MouseIconEnabled = true
-    end)
-
+    -- Unload all of the signals
     for Idx = #Library.Signals, 1, -1 do
         local Connection = table.remove(Library.Signals, Idx)
-        pcall(function() Connection:Disconnect() end)
+        Connection:Disconnect()
     end
 
+     -- Call our unload callback, maybe to undo some hooks etc
     if Library.OnUnload then
         Library.OnUnload()
     end
@@ -528,7 +518,7 @@ do
             AnchorPoint = Vector2.new(0.5, 0.5);
             Size = UDim2.new(0, 6, 0, 6);
             BackgroundTransparency = 1;
-            Image = 'https://create.roblox.com/store/asset/11720549778/Pink-CursorCrosshair';
+            Image = 'http://www.roblox.com/asset/?id=9619665977';
             ImageColor3 = Color3.new(0, 0, 0);
             ZIndex = 19;
             Parent = SatVibMap;
@@ -538,7 +528,7 @@ do
             Size = UDim2.new(0, CursorOuter.Size.X.Offset - 2, 0, CursorOuter.Size.Y.Offset - 2);
             Position = UDim2.new(0, 1, 0, 1);
             BackgroundTransparency = 1;
-            Image = 'http://www.roblox.com/asset/?id=11720549778';
+            Image = 'http://www.roblox.com/asset/?id=9619665977';
             ZIndex = 20;
             Parent = CursorOuter;
         })
@@ -2248,7 +2238,7 @@ do
             BackgroundTransparency = 1;
             Position = UDim2.new(1, -16, 0.5, 0);
             Size = UDim2.new(0, 12, 0, 12);
-            Image = 'http://www.roblox.com/asset/?id=11720549778';
+            Image = 'http://www.roblox.com/asset/?id=6282522798';
             ZIndex = 8;
             Parent = DropdownInner;
         });
@@ -3517,142 +3507,140 @@ function Library:CreateWindow(...)
     local Toggled = false;
     local Fading = false;
 
-function Library:Toggle()
-    if Fading then
-        return;
-    end;
+    function Library:Toggle()
+        if Fading then
+            return;
+        end;
 
-    local FadeTime = Config.MenuFadeTime;
-    Fading = true;
-    Toggled = (not Toggled);
-    ModalElement.Modal = Toggled;
+        local FadeTime = Config.MenuFadeTime;
+        Fading = true;
+        Toggled = (not Toggled);
+        ModalElement.Modal = Toggled;
 
-    -- Если уже есть курсор - удаляем его перед созданием нового
-    if Library._CursorObjects then
-        pcall(function() Library._CursorObjects.Cursor:Remove() end)
-        pcall(function() Library._CursorObjects.Outline:Remove() end)
-        Library._CursorObjects = nil
+        if Toggled then
+            -- A bit scuffed, but if we're going from not toggled -> toggled we want to show the frame immediately so that the fade is visible.
+            Outer.Visible = true;
+
+            task.spawn(function()
+                -- FIXED CURSOR: soft pink, persistent and safe (won't break other Drawing visuals like ESP/FOV)
+                local SoftPink = Color3.fromRGB(255, 182, 193);
+                local OldIcon = InputService.MouseIconEnabled;
+
+                local ok1, Cursor = pcall(Drawing.new, 'Triangle');
+                local ok2, CursorOutline = pcall(Drawing.new, 'Triangle');
+
+                if not (ok1 and ok2 and Cursor and CursorOutline) then
+                    -- If Drawing API fails for some reason, do not break the menu.
+                    return;
+                end;
+
+                -- Configure main cursor (soft pink fill)
+                Cursor.Thickness = 1;
+                Cursor.Filled = true;
+                Cursor.Color = SoftPink;
+                Cursor.Transparency = 1;
+                Cursor.ZIndex = 9999;
+                Cursor.Visible = true;
+
+                -- Configure cursor outline (black border so it is visible on any background)
+                CursorOutline.Thickness = 1;
+                CursorOutline.Filled = false;
+                CursorOutline.Color = Color3.fromRGB(0, 0, 0);
+                CursorOutline.Transparency = 1;
+                CursorOutline.ZIndex = 10000;
+                CursorOutline.Visible = true;
+
+                local function SafeRemove()
+                    pcall(function() Cursor.Visible = false; Cursor:Remove(); end);
+                    pcall(function() CursorOutline.Visible = false; CursorOutline:Remove(); end);
+                end;
+
+                -- Loop is wrapped in pcall so an error doesn't leave MouseIconEnabled disabled
+                -- (which is what was breaking ESP/FOV visuals after cursor "disappeared").
+                local okLoop, errLoop = pcall(function()
+                    while Toggled and ScreenGui.Parent do
+                        -- Only disable system icon while our cursor is actually visible/drawn
+                        if InputService.MouseIconEnabled then
+                            InputService.MouseIconEnabled = false;
+                        end;
+
+                        local mPos = InputService:GetMouseLocation();
+
+                        -- Keep cursor soft pink (do NOT override with AccentColor anymore)
+                        Cursor.Color = SoftPink;
+                        Cursor.Visible = true;
+                        CursorOutline.Visible = true;
+
+                        Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
+                        Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
+                        Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
+
+                        CursorOutline.PointA = Cursor.PointA;
+                        CursorOutline.PointB = Cursor.PointB;
+                        CursorOutline.PointC = Cursor.PointC;
+
+                        RenderStepped:Wait();
+                    end;
+                end);
+
+                -- Always restore the system mouse icon state and clean up,
+                -- even if the loop errored. This fixes the bug where visuals
+                -- (ESP, FOV, etc.) stopped working after the cursor "vanished".
+                InputService.MouseIconEnabled = (OldIcon ~= false) and true or OldIcon;
+                SafeRemove();
+            end);
+        end;
+
+        for _, Desc in next, Outer:GetDescendants() do
+            local Properties = {};
+
+            if Desc:IsA('ImageLabel') then
+                table.insert(Properties, 'ImageTransparency');
+                table.insert(Properties, 'BackgroundTransparency');
+            elseif Desc:IsA('TextLabel') or Desc:IsA('TextBox') then
+                table.insert(Properties, 'TextTransparency');
+            elseif Desc:IsA('Frame') or Desc:IsA('ScrollingFrame') then
+                table.insert(Properties, 'BackgroundTransparency');
+            elseif Desc:IsA('UIStroke') then
+                table.insert(Properties, 'Transparency');
+            end;
+
+            local Cache = TransparencyCache[Desc];
+
+            if (not Cache) then
+                Cache = {};
+                TransparencyCache[Desc] = Cache;
+            end;
+
+            for _, Prop in next, Properties do
+                if not Cache[Prop] then
+                    Cache[Prop] = Desc[Prop];
+                end;
+
+                if Cache[Prop] == 1 then
+                    continue;
+                end;
+
+                TweenService:Create(Desc, TweenInfo.new(FadeTime, Enum.EasingStyle.Linear), { [Prop] = Toggled and Cache[Prop] or 1 }):Play();
+            end;
+        end;
+
+        task.wait(FadeTime);
+
+        Outer.Visible = Toggled;
+
+        Fading = false;
     end
 
-    if Toggled then
-        Outer.Visible = true;
-
-        task.spawn(function()
-            local State = InputService.MouseIconEnabled;
-            Library._SavedMouseIconState = State
-
-            local Cursor = Drawing.new('Triangle');
-            Cursor.Thickness = 1;
-            Cursor.Filled = true;
-            Cursor.Visible = true;
-
-            local CursorOutline = Drawing.new('Triangle');
-            CursorOutline.Thickness = 1;
-            CursorOutline.Filled = false;
-            CursorOutline.Color = Color3.new(0, 0, 0);
-            CursorOutline.Visible = true;
-
-            -- Сохраняем ссылки для последующей очистки
-            Library._CursorObjects = {
-                Cursor = Cursor,
-                Outline = CursorOutline
-            }
-
-            -- Используем RenderStepped:Connect вместо while loop для надёжности
-            local CursorConnection
-            CursorConnection = RunService.RenderStepped:Connect(function()
-                if (not Toggled) or (not ScreenGui.Parent) then
-                    CursorConnection:Disconnect()
-                    pcall(function() Cursor:Remove() end)
-                    pcall(function() CursorOutline:Remove() end)
-                    InputService.MouseIconEnabled = State
-                    if Library._CursorObjects then
-                        Library._CursorObjects = nil
-                    end
-                    return
-                end
-
-                InputService.MouseIconEnabled = false;
-
-                local success, mPos = pcall(function()
-                    return InputService:GetMouseLocation()
-                end)
-
-                if not success or not mPos then return end
-
-                pcall(function()
-                    Cursor.Color = Library.AccentColor;
-                    Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
-                    Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
-                    Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
-
-                    CursorOutline.PointA = Cursor.PointA;
-                    CursorOutline.PointB = Cursor.PointB;
-                    CursorOutline.PointC = Cursor.PointC;
-
-                    Cursor.Visible = true
-                    CursorOutline.Visible = true
-                end)
-            end)
-
-            Library:GiveSignal(CursorConnection)
-        end);
-    end;
-
-    for _, Desc in next, Outer:GetDescendants() do
-        local Properties = {};
-
-        if Desc:IsA('ImageLabel') then
-            table.insert(Properties, 'ImageTransparency');
-            table.insert(Properties, 'BackgroundTransparency');
-        elseif Desc:IsA('TextLabel') or Desc:IsA('TextBox') then
-            table.insert(Properties, 'TextTransparency');
-        elseif Desc:IsA('Frame') or Desc:IsA('ScrollingFrame') then
-            table.insert(Properties, 'BackgroundTransparency');
-        elseif Desc:IsA('UIStroke') then
-            table.insert(Properties, 'Transparency');
-        end;
-
-        local Cache = TransparencyCache[Desc];
-
-        if (not Cache) then
-            Cache = {};
-            TransparencyCache[Desc] = Cache;
-        end;
-
-        for _, Prop in next, Properties do
-            if not Cache[Prop] then
-                Cache[Prop] = Desc[Prop];
-            end;
-
-            if Cache[Prop] == 1 then
-                continue;
-            end;
-
-            pcall(function()
-                TweenService:Create(Desc, TweenInfo.new(FadeTime, Enum.EasingStyle.Linear), { [Prop] = Toggled and Cache[Prop] or 1 }):Play();
-            end)
-        end;
-    end;
-
-    task.wait(FadeTime);
-
-    Outer.Visible = Toggled;
-
-    Fading = false;
-end
-
-Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
-    if Fading then return end -- защита от спама клавишей
-    
-    if type(Library.ToggleKeybind) == 'table' and Library.ToggleKeybind.Type == 'KeyPicker' then
-        if Input.UserInputType == Enum.UserInputType.Keyboard and Input.KeyCode.Name == Library.ToggleKeybind.Value then
+    Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
+        if type(Library.ToggleKeybind) == 'table' and Library.ToggleKeybind.Type == 'KeyPicker' then
+            if Input.UserInputType == Enum.UserInputType.Keyboard and Input.KeyCode.Name == Library.ToggleKeybind.Value then
+                task.spawn(Library.Toggle)
+            end
+        elseif Input.KeyCode == Enum.KeyCode.RightControl or (Input.KeyCode == Enum.KeyCode.RightShift and (not Processed)) then
             task.spawn(Library.Toggle)
         end
-    elseif Input.KeyCode == Enum.KeyCode.RightControl or (Input.KeyCode == Enum.KeyCode.RightShift and (not Processed)) then
-        task.spawn(Library.Toggle)
-    end
-end))
+    end))
 
     if Config.AutoShow then task.spawn(Library.Toggle) end
 
