@@ -3507,9 +3507,9 @@ function Library:CreateWindow(...)
         Parent = ScreenGui;
     });
 
-local TransparencyCache = {};
-local Toggled = false;
-local Fading = false;
+    local TransparencyCache = {};
+    local Toggled = false;
+    local Fading = false;
 local CursorThread = nil; -- НОВОЕ: трекаем поток курсора
 
 function Library:Toggle()
