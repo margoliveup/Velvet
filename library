@@ -3522,37 +3522,29 @@ function Library:CreateWindow(...)
             Outer.Visible = true;
 
             task.spawn(function()
-                -- FIXED: Стабильный курсор с нежно-розовым цветом
+                -- TODO: add cursor fade?
                 local State = InputService.MouseIconEnabled;
 
                 local Cursor = Drawing.new('Triangle');
                 Cursor.Thickness = 1;
                 Cursor.Filled = true;
                 Cursor.Visible = true;
-                Cursor.Color = Color3.fromRGB(255, 182, 193); -- Нежно-розовый цвет
-                Cursor.ZIndex = 9999; -- Курсор всегда поверх
 
                 local CursorOutline = Drawing.new('Triangle');
-                CursorOutline.Thickness = 2;
+                CursorOutline.Thickness = 1;
                 CursorOutline.Filled = false;
-                CursorOutline.Color = Color3.fromRGB(139, 69, 88); -- Темно-розовый контур
+                CursorOutline.Color = Color3.new(0, 0, 0);
                 CursorOutline.Visible = true;
-                CursorOutline.ZIndex = 9998;
 
-                -- Сохраняем ссылки для доступа
-                Library.CustomCursor = Cursor;
-                Library.CustomCursorOutline = CursorOutline;
-
-                local running = true;
-
-                while running and Toggled and ScreenGui.Parent do
-                    local success = pcall(function()
-                        -- Принудительно отключаем системный курсор каждый кадр
+                local success = pcall(function()
+                    while Toggled and ScreenGui.Parent do
                         InputService.MouseIconEnabled = false;
 
                         local mPos = InputService:GetMouseLocation();
 
-                        -- Обновляем позицию курсора
+                        Cursor.Color = Color3.fromRGB(255, 182, 193); -- Нежно-розовый цвет
+                        Cursor.Visible = true;
+
                         Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
                         Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
                         Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
@@ -3560,33 +3552,20 @@ function Library:CreateWindow(...)
                         CursorOutline.PointA = Cursor.PointA;
                         CursorOutline.PointB = Cursor.PointB;
                         CursorOutline.PointC = Cursor.PointC;
-                        
-                        -- Проверяем видимость
-                        if Cursor.Visible ~= true then
-                            Cursor.Visible = true;
-                        end
-                        if CursorOutline.Visible ~= true then
-                            CursorOutline.Visible = true;
-                        end
-                    end);
-                    
-                    if not success then
-                        running = false;
-                    end
+                        CursorOutline.Visible = true;
 
-                    task.wait();
-                end;
+                        RenderStepped:Wait();
+                    end;
+                end)
 
-                -- Восстанавливаем системный курсор
-                task.wait(0.05);
-                InputService.MouseIconEnabled = State;
+                -- ВАЖНО: Всегда восстанавливаем курсор, даже при ошибке
+                pcall(function()
+                    InputService.MouseIconEnabled = true;
+                end)
 
-                -- Безопасно удаляем
-                pcall(function() Cursor:Remove(); end);
-                pcall(function() CursorOutline:Remove(); end);
-                
-                Library.CustomCursor = nil;
-                Library.CustomCursorOutline = nil;
+                -- Безопасное удаление объектов Drawing
+                pcall(function() Cursor:Remove(); end)
+                pcall(function() CursorOutline:Remove(); end)
             end);
         end;
 
@@ -3661,33 +3640,28 @@ end;
 Players.PlayerAdded:Connect(OnPlayerChange);
 Players.PlayerRemoving:Connect(OnPlayerChange);
 
+
+-- ============================================================
+-- ЗАЩИТА КУРСОРА ОТ ПРОПАДАНИЯ (FIX)
+-- ============================================================
+-- Этот код гарантирует, что курсор не пропадет навсегда
+task.spawn(function()
+    local lastCheck = tick()
+    RunService.Heartbeat:Connect(function()
+        -- Проверяем каждые 0.5 секунды
+        if tick() - lastCheck > 0.5 then
+            lastCheck = tick()
+            -- Если меню закрыто, убеждаемся что курсор включен
+            if not Toggled then
+                pcall(function()
+                    if not InputService.MouseIconEnabled then
+                        InputService.MouseIconEnabled = true
+                    end
+                end)
+            end
+        end
+    end)
+end)
+
 getgenv().Library = Library
-
--- ============================================================
--- CURSOR RESTORE FUNCTION (FIX)
--- ============================================================
-function Library:RestoreCursor()
-    -- Принудительно восстанавливаем системный курсор
-    pcall(function()
-        InputService.MouseIconEnabled = true;
-    end);
-    
-    -- Удаляем кастомный курсор если он существует
-    if Library.CustomCursor then
-        pcall(function()
-            Library.CustomCursor.Visible = false;
-            Library.CustomCursor:Remove();
-            Library.CustomCursor = nil;
-        end);
-    end
-    
-    if Library.CustomCursorOutline then
-        pcall(function()
-            Library.CustomCursorOutline.Visible = false;
-            Library.CustomCursorOutline:Remove();
-            Library.CustomCursorOutline = nil;
-        end);
-    end
-end;
-
 return Library
