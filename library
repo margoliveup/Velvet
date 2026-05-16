@@ -380,13 +380,23 @@ function Library:GiveSignal(Signal)
 end
 
 function Library:Unload()
-    -- Unload all of the signals
+    -- Чистим курсор если он есть
+    if Library._CursorObjects then
+        pcall(function() Library._CursorObjects.Cursor:Remove() end)
+        pcall(function() Library._CursorObjects.Outline:Remove() end)
+        Library._CursorObjects = nil
+    end
+    
+    -- Восстанавливаем курсор системы
+    pcall(function()
+        InputService.MouseIconEnabled = true
+    end)
+
     for Idx = #Library.Signals, 1, -1 do
         local Connection = table.remove(Library.Signals, Idx)
-        Connection:Disconnect()
+        pcall(function() Connection:Disconnect() end)
     end
 
-     -- Call our unload callback, maybe to undo some hooks etc
     if Library.OnUnload then
         Library.OnUnload()
     end
@@ -3507,42 +3517,71 @@ function Library:CreateWindow(...)
     local Toggled = false;
     local Fading = false;
 
-    function Library:Toggle()
-        if Fading then
-            return;
-        end;
+function Library:Toggle()
+    if Fading then
+        return;
+    end;
 
-        local FadeTime = Config.MenuFadeTime;
-        Fading = true;
-        Toggled = (not Toggled);
-        ModalElement.Modal = Toggled;
+    local FadeTime = Config.MenuFadeTime;
+    Fading = true;
+    Toggled = (not Toggled);
+    ModalElement.Modal = Toggled;
 
-        if Toggled then
-            -- A bit scuffed, but if we're going from not toggled -> toggled we want to show the frame immediately so that the fade is visible.
-            Outer.Visible = true;
+    -- Если уже есть курсор - удаляем его перед созданием нового
+    if Library._CursorObjects then
+        pcall(function() Library._CursorObjects.Cursor:Remove() end)
+        pcall(function() Library._CursorObjects.Outline:Remove() end)
+        Library._CursorObjects = nil
+    end
 
-            task.spawn(function()
-                -- TODO: add cursor fade?
-                local State = InputService.MouseIconEnabled;
+    if Toggled then
+        Outer.Visible = true;
 
-                local Cursor = Drawing.new('Triangle');
-                Cursor.Thickness = 1;
-                Cursor.Filled = true;
-                Cursor.Visible = true;
+        task.spawn(function()
+            local State = InputService.MouseIconEnabled;
+            Library._SavedMouseIconState = State
 
-                local CursorOutline = Drawing.new('Triangle');
-                CursorOutline.Thickness = 1;
-                CursorOutline.Filled = false;
-                CursorOutline.Color = Color3.new(0, 0, 0);
-                CursorOutline.Visible = true;
+            local Cursor = Drawing.new('Triangle');
+            Cursor.Thickness = 1;
+            Cursor.Filled = true;
+            Cursor.Visible = true;
 
-                while Toggled and ScreenGui.Parent do
-                    InputService.MouseIconEnabled = false;
+            local CursorOutline = Drawing.new('Triangle');
+            CursorOutline.Thickness = 1;
+            CursorOutline.Filled = false;
+            CursorOutline.Color = Color3.new(0, 0, 0);
+            CursorOutline.Visible = true;
 
-                    local mPos = InputService:GetMouseLocation();
+            -- Сохраняем ссылки для последующей очистки
+            Library._CursorObjects = {
+                Cursor = Cursor,
+                Outline = CursorOutline
+            }
 
+            -- Используем RenderStepped:Connect вместо while loop для надёжности
+            local CursorConnection
+            CursorConnection = RunService.RenderStepped:Connect(function()
+                if (not Toggled) or (not ScreenGui.Parent) then
+                    CursorConnection:Disconnect()
+                    pcall(function() Cursor:Remove() end)
+                    pcall(function() CursorOutline:Remove() end)
+                    InputService.MouseIconEnabled = State
+                    if Library._CursorObjects then
+                        Library._CursorObjects = nil
+                    end
+                    return
+                end
+
+                InputService.MouseIconEnabled = false;
+
+                local success, mPos = pcall(function()
+                    return InputService:GetMouseLocation()
+                end)
+
+                if not success or not mPos then return end
+
+                pcall(function()
                     Cursor.Color = Library.AccentColor;
-
                     Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
                     Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
                     Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
@@ -3551,66 +3590,69 @@ function Library:CreateWindow(...)
                     CursorOutline.PointB = Cursor.PointB;
                     CursorOutline.PointC = Cursor.PointC;
 
-                    RenderStepped:Wait();
-                end;
+                    Cursor.Visible = true
+                    CursorOutline.Visible = true
+                end)
+            end)
 
-                InputService.MouseIconEnabled = State;
+            Library:GiveSignal(CursorConnection)
+        end);
+    end;
 
-                Cursor:Remove();
-                CursorOutline:Remove();
-            end);
+    for _, Desc in next, Outer:GetDescendants() do
+        local Properties = {};
+
+        if Desc:IsA('ImageLabel') then
+            table.insert(Properties, 'ImageTransparency');
+            table.insert(Properties, 'BackgroundTransparency');
+        elseif Desc:IsA('TextLabel') or Desc:IsA('TextBox') then
+            table.insert(Properties, 'TextTransparency');
+        elseif Desc:IsA('Frame') or Desc:IsA('ScrollingFrame') then
+            table.insert(Properties, 'BackgroundTransparency');
+        elseif Desc:IsA('UIStroke') then
+            table.insert(Properties, 'Transparency');
         end;
 
-        for _, Desc in next, Outer:GetDescendants() do
-            local Properties = {};
+        local Cache = TransparencyCache[Desc];
 
-            if Desc:IsA('ImageLabel') then
-                table.insert(Properties, 'ImageTransparency');
-                table.insert(Properties, 'BackgroundTransparency');
-            elseif Desc:IsA('TextLabel') or Desc:IsA('TextBox') then
-                table.insert(Properties, 'TextTransparency');
-            elseif Desc:IsA('Frame') or Desc:IsA('ScrollingFrame') then
-                table.insert(Properties, 'BackgroundTransparency');
-            elseif Desc:IsA('UIStroke') then
-                table.insert(Properties, 'Transparency');
+        if (not Cache) then
+            Cache = {};
+            TransparencyCache[Desc] = Cache;
+        end;
+
+        for _, Prop in next, Properties do
+            if not Cache[Prop] then
+                Cache[Prop] = Desc[Prop];
             end;
 
-            local Cache = TransparencyCache[Desc];
-
-            if (not Cache) then
-                Cache = {};
-                TransparencyCache[Desc] = Cache;
+            if Cache[Prop] == 1 then
+                continue;
             end;
 
-            for _, Prop in next, Properties do
-                if not Cache[Prop] then
-                    Cache[Prop] = Desc[Prop];
-                end;
-
-                if Cache[Prop] == 1 then
-                    continue;
-                end;
-
+            pcall(function()
                 TweenService:Create(Desc, TweenInfo.new(FadeTime, Enum.EasingStyle.Linear), { [Prop] = Toggled and Cache[Prop] or 1 }):Play();
-            end;
+            end)
         end;
+    end;
 
-        task.wait(FadeTime);
+    task.wait(FadeTime);
 
-        Outer.Visible = Toggled;
+    Outer.Visible = Toggled;
 
-        Fading = false;
-    end
+    Fading = false;
+end
 
-    Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
-        if type(Library.ToggleKeybind) == 'table' and Library.ToggleKeybind.Type == 'KeyPicker' then
-            if Input.UserInputType == Enum.UserInputType.Keyboard and Input.KeyCode.Name == Library.ToggleKeybind.Value then
-                task.spawn(Library.Toggle)
-            end
-        elseif Input.KeyCode == Enum.KeyCode.RightControl or (Input.KeyCode == Enum.KeyCode.RightShift and (not Processed)) then
+Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
+    if Fading then return end -- защита от спама клавишей
+    
+    if type(Library.ToggleKeybind) == 'table' and Library.ToggleKeybind.Type == 'KeyPicker' then
+        if Input.UserInputType == Enum.UserInputType.Keyboard and Input.KeyCode.Name == Library.ToggleKeybind.Value then
             task.spawn(Library.Toggle)
         end
-    end))
+    elseif Input.KeyCode == Enum.KeyCode.RightControl or (Input.KeyCode == Enum.KeyCode.RightShift and (not Processed)) then
+        task.spawn(Library.Toggle)
+    end
+end))
 
     if Config.AutoShow then task.spawn(Library.Toggle) end
 
